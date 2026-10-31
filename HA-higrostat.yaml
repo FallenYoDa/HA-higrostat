@@ -1,0 +1,94 @@
+
+blueprint:
+  name: Sterowanie wilgotnością 24h z histerezą
+  description: |
+    Automatyczne sterowanie przełącznikiem (np. nawilżaczem)
+    w zależności od wilgotności, z jedną nastawą przez całą
+    dobę, histerezą i kontrolą co 5 minut.
+  domain: automation
+  author: FallenYoDa
+#  version: "1.0"
+  input:
+    humidity_sensor:
+      name: Czujnik wilgotności
+      description: Czujnik odczytujący bieżącą wilgotność
+      selector:
+        entity:
+          domain: sensor
+
+    switch_entity:
+      name: Przełącznik / gniazdko z nawilżaczem
+      selector:
+        entity:
+          domain: switch
+
+    target_humidity:
+      name: Wilgotność zadana
+      description: Docelowa wilgotność przez całą dobę
+      default: 70
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 0.1
+          unit_of_measurement: "%"
+
+    hysteresis:
+      name: Histereza (%)
+      description: Różnica wilgotności dla włączania/wyłączania nawilżacza
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 20
+          step: 0.1
+          unit_of_measurement: "%"
+
+trigger:
+  - platform: state
+    entity_id: !input humidity_sensor
+  - platform: time_pattern
+    minutes: "/5"
+
+variables:
+  humidity_sensor: !input humidity_sensor
+  switch_entity: !input switch_entity
+  target_humidity: !input target_humidity
+  hysteresis: !input hysteresis
+  aktualna_wilgotnosc: "{{ states(humidity_sensor) | float(0) }}"
+  zadana_wilgotnosc: "{{ target_humidity }}"
+  h: "{{ hysteresis }}"
+  status_switch: "{{ states(switch_entity) }}"
+
+condition:
+  - condition: template
+    value_template: "{{ states(humidity_sensor) not in ['unknown', 'unavailable'] }}"
+
+action:
+  - choose:
+      - conditions: "{{ aktualna_wilgotnosc < zadana_wilgotnosc - h }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input switch_entity
+            continue_on_error: true
+          - service: system_log.write
+            data:
+              level: info
+              logger: terrarium_higrostat
+              message: "💧 Nawilżacz WŁĄCZONY. Wilgotność: {{ aktualna_wilgotnosc }}% < {{ zadana_wilgotnosc - h }}% (próg włączania)."
+
+      - conditions: "{{ aktualna_wilgotnosc > zadana_wilgotnosc + h }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input switch_entity
+            continue_on_error: true
+          - service: system_log.write
+            data:
+              level: info
+              logger: terrarium_higrostat
+              message: "💨 Nawilżacz WYŁĄCZONY. Wilgotność: {{ aktualna_wilgotnosc }}% > {{ zadana_wilgotnosc + h }}% (próg wyłączania)."
+    default: []
+
+mode: single
